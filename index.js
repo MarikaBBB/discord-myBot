@@ -15,11 +15,23 @@ const client = new Client({
     GatewayIntentBits.GuildMembers,
     GatewayIntentBits.DirectMessages,
     GatewayIntentBits.MessageContent,
+    GatewayIntentBits.GuildVoiceStates,
   ],
 });
 
 // Command prefix
 const commandPrefix = "!";
+
+const jokes = [
+  'Why don\'t scientists trust atoms? Because they make up everything.',
+  'I told my wife she should embrace her mistakes. She gave me a hug.',
+  'Parallel lines have so much in common. It\'s a shame they\'ll never meet.'
+  // ... add more jokes
+];
+
+// imports for the play command
+const ytdl = require('ytdl-core');
+const { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus } = require('@discordjs/voice');
 
 client.once("ready", () => {
   console.log("My-bot is ready!");
@@ -39,7 +51,12 @@ client.on("messageCreate", async (message) => {
     userinfo: () => handleUserinfo(message),
     meme: () => handleMeme(message),
     weather: () => handleWeather(args, message),
+    help: () => handleHelp(message),
+    joke: () => handleJoke(message),
+    log: () => handleLog(message),
     greet: () => message.channel.send(`Hello ${message.author.username}!`),
+    poll: () => handlePoll(args, message),
+    play: () => handlePlay(args, message),
     // ... add more commands and features as needed
   };
 
@@ -99,6 +116,131 @@ async function handleWeather(args, message) {
       console.error("Error fetching weather:", error);
       await message.channel.send(`Could not retrieve weather for ${city}.`);
     }
+  }
+}
+
+function handleHelp(message) {
+  const helpMessage = `
+  **Available commands:**
+  - \`!gif\`: Get a random GIF
+  - \`!ping\`: Get a Pong response
+  - \`!echo [message]\`: Echoes the message
+  - \`!userinfo\`: Get your user information
+  - \`!meme\`: Get a random meme
+  - \`!weather [city]\`: Get weather information for a city
+  - \`!greet\`: Personalized greeting
+  - \`!joke\`: Get a random joke
+  - \`!help\`: Display this help message
+  - \`!log\`: Display this log message
+  - \`!poll [question] / [option1] / [option2] / ...\`: Create a poll with given options
+  - \`!play [song name or URL]\`: Play music in a voice channel
+  `;
+  message.channel.send(helpMessage);
+}
+
+
+
+function handleJoke(message) {
+  const randomIndex = Math.floor(Math.random() * jokes.length);
+  message.channel.send(jokes[randomIndex]);
+}
+
+function handleLog(message) {
+  console.log(`Command used by ${message.author.username}: ${message.content}`);
+  message.channel.send('Your command usage has been logged.');
+}
+
+async function handlePoll(args, message) {
+  // The args are expected to be in the format: question / option1 / option2 / ...
+  if (args.length < 2) {
+    await message.channel.send("You need at least two options to create a poll.");
+    return;
+  }
+
+  const [question, ...options] = args.join(' ').split(' / ');
+  if (options.length < 2) {
+    await message.channel.send("You need at least two options to create a poll.");
+    return;
+  }
+
+  let pollMessageContent = `**${question}**\n`;
+  const pollReactions = ['🇦', '🇧', '🇨', '🇩', '🇪']; // Define more reactions for more options
+
+  options.forEach((option, index) => {
+    if (index < pollReactions.length) {
+      pollMessageContent += `${pollReactions[index]} ${option}\n`;
+    }
+  });
+
+  const pollMessage = await message.channel.send(pollMessageContent);
+  for (let i = 0; i < options.length && i < pollReactions.length; i++) {
+    await pollMessage.react(pollReactions[i]);
+  }
+
+  // Add logic to handle the collection of reactions and tally votes as needed
+}
+
+// Utility to get an emoji by index. 
+function getReactionEmoji(index) {
+  const emojis = ['🅰️', '🅱️', '🇨', '🇩', '🇪']; // emojis
+  return emojis[index];
+}
+
+async function handlePlay(args, message) {
+  if (!args.length) {
+    await message.channel.send("Please provide a YouTube URL to play.");
+    return;
+  }
+
+  // Check if the URL is a valid YouTube URL
+  const songUrl = args.join(' ');
+  if (!ytdl.validateURL(songUrl)) {
+    await message.channel.send("Please provide a valid YouTube URL.");
+    return;
+  }
+
+  const voiceChannel = message.member.voice.channel;
+  if (!voiceChannel) {
+    await message.channel.send("You need to be in a voice channel to play music!");
+    return;
+  }
+
+  try {
+    const songInfo = await ytdl.getInfo(songUrl);
+    const stream = ytdl.downloadFromInfo(songInfo, { filter: 'audioonly' });
+
+    // Handle streaming errors
+    stream.on('error', error => {
+      console.error(`Stream Error: ${error.message}`);
+      message.channel.send('An error occurred while streaming the track.');
+    });
+
+    const connection = joinVoiceChannel({
+      channelId: voiceChannel.id,
+      guildId: message.guild.id,
+      adapterCreator: message.guild.voiceAdapterCreator,
+    });
+
+    const player = createAudioPlayer();
+    const resource = createAudioResource(stream, { metadata: { title: songInfo.videoDetails.title } });
+
+    player.play(resource);
+    connection.subscribe(player);
+
+    player.on('error', error => {
+      console.error(`Error: ${error.message} with resource ${resource.metadata.title}`);
+      message.channel.send('An error occurred while playing the track.');
+    });
+
+    player.on(AudioPlayerStatus.Idle, () => {
+      connection.destroy(); // Disconnects from the voice channel
+      message.channel.send("Playback has finished.");
+    });
+
+    await message.channel.send(`Now playing: ${resource.metadata.title}`);
+  } catch (error) {
+    console.error("Error playing the song:", error);
+    await message.channel.send("There was an error playing the song.");
   }
 }
 
